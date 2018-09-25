@@ -1,0 +1,78 @@
+#!/bin/bash
+# Backup directories to server over ssh
+# Automatically initiates when connected to wifi network
+# Place in /etc/network/if-up.d & make executable
+# Assumes SSH keys have already been exchanged so no password needed
+# Make sure to mount drives with user permissions (e.g. ntfs uid=[USER_NAME],gid=[USER_NAME],dmask=022,fmask=133)
+
+# VARIABLES
+# SSID to trigger the script
+wifiSSID=''
+
+# Username and IP Address of remote machine (e.g. root@192.168.0.2)
+sshInfo='USER@IP'
+
+# If you setup your SSH keys as a user instead of root, please indiate the path below. If you used
+# the ssh key guide you probably just need to change the section in the middle with your username.
+# If this variable is left blank, the script assumes your SSH key was setup as root.
+sshPath="/home/USER/.ssh/id_rsa"
+
+# Provide an absolute path for the directory you want to transfer to on the remote machine (exclude the ssh protocol user@IP part)
+destinationDir='/destination/dir'
+
+# List in an array all the directories on the main machine you want to backup. One directory per line. Enclose in ''. No commas!
+sourceDir=( 
+    '/dir/1'
+    '/dir/2'
+    '/dir/3'
+    '/dir/4' 
+)
+
+# Got some other stuff you want to backup to a different folder on the remote machine? Put it here! A loop going through multiple 
+# source and destination dir would be better, but without objects or nested arrays in bash, it gets a little messy. If you have 
+# several different things to backup in multiple different places, it's easiest to write a python wrapper for the bash script.
+destinationDir2='/another/destination/dir'
+sourceDir2=( 
+    '/alternate/dir/1'
+    '/alternate/dir/2'
+    '/alternate/dir/3' 
+)
+
+
+# SCRIPT
+# Check to make sure the SSID variable are set
+if [[ ! -z $wifiSSID ]]
+then
+    # Match the SSID to the connected wifi network
+    if [[ $(iwgetid -r) == "$wifiSSID" ]]
+    then
+        # Check to make sure source and destination variables are set
+        if [[ ! -z $destinationDir && ! -z $sourceDir ]]
+        then
+            # Loop through all the source directories
+            for elt in "${sourceDir[@]}"
+            do
+                # Check if a non-root user was used to setup SSH keys
+                if [[ ! -z $sshPath ]]
+                then
+                    rsync -e "ssh -i $sshPath" -azp "$elt" "$sshInfo:$destinationDir/"
+                else # Otherwise run ssh without the -i switch (e.g. as root)
+                    rsync -e "ssh" -azp "$elt" "$sshInfo:$destinationDir/"
+                fi
+            done
+        fi
+        # Check to make sure second source and destination variables are set
+        if [[ ! -z $destinationDir2 && ! -z $sourceDir2 ]]
+        then
+            for elt in "${sourceDir2[@]}"
+            do
+                if [[ ! -z $sshPath ]]
+                then
+                    rsync -e "ssh -i $sshPath" -azp "$elt" "$sshInfo:$destinationDir2/"
+                else
+                    rsync --exclude=".*/" -e "ssh" -azp "$elt" "$sshInfo:$destinationDir2/"
+                fi
+            done
+        fi
+    fi
+fi
