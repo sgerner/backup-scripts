@@ -4,6 +4,7 @@
 # Place in /etc/network/if-up.d & make executable
 # Assumes SSH keys have already been exchanged so no password needed
 # Make sure to mount drives with user permissions (e.g. ntfs uid=[USER_NAME],gid=[USER_NAME],dmask=022,fmask=133)
+# Full guide at https://github.com/sgerner/backup-scripts/wiki/Setup-Guide-for-ssh-backup-on-wifi
 
 # VARIABLES
 # SSID to trigger the script
