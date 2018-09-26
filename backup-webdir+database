@@ -58,7 +58,7 @@ then
     then
         mysqldump -p$RootSQLPassword $Database > $SourceDir/db_backups/$SQLDumpFile
     fi
-    ls -tp $SourceDir/db_backups | grep -v '/$' | tail -n +2 | xargs -d '\n' -r rm -- #Remove SQL Database if file count > 1
+    ls -tp $SourceDir/db_backups | grep -v '/$' | tail -n +2 | xargs -I% -d '\n' -r rm -f $SourceDir/db_backups/% #Remove SQL Database if file count > 1
 
     # CREATE AND COMPRESS ARCHIVE DAILY
     # Each time this script is called by cron or manually, an archive will be created in /daily
