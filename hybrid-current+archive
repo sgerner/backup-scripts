@@ -1,0 +1,133 @@
+#!/bin/bash
+# Backup script to dump a SQL database and sync with web dir and config files each time script is run.
+# Build an archive and sync to remote weekly. Delete old archives as needed.
+# Warning: this script hard codes mysql password. Be sure this is not publically accessible.
+# Full instructions at: https://github.com/sgerner/backup-scripts/wiki/Setup-Guide-for-hybrid-current-archive
+
+# VARIABLES
+# Where are you backing up from? This is an array of dir, one line per item (or a space between each if single line)
+SourceDirs=(
+    '/usr/local/lsws/conf' #LiteSpeed Configuration Files
+    '/usr/local/lsws/HTML_DIR' #LiteSpeed web dir
+    '/etc/mail' #Sendmail config
+    '/etc/opendkim' #OpenDKIM config
+)
+
+# Where do you want backups to go localy?
+DestinationDir='/root/backups'
+
+# What do you want to title the backup archive? Use date +switches to add current date and time.
+# E.g. $(date +%Y-%m-%d) will add the current year, month, and day
+DestinationFile=backup$(date +%Y-%m-%d).tar.gz
+
+# MYSQL / MariaDB Access Info
+RootSQLPassword=''
+Database=''
+SQLDumpFile=$Database$(date +%Y-%m-%d).sql
+DatabasesToKeep=7
+
+# Set the frequency archives are updated to the cloud as either 'daily', 'weekly', or 'monthly' (lowercase)
+rcloneArchiveFrequency='weekly'
+# rclone Remote Info
+rcloneRemote=''
+rcloneBucket=''
+
+
+# Check if the destination, destination file, and source directories variables are not empty.
+if [[ ! -z $SourceDirs && ! -z $DestinationDir && ! -z $DestinationFile ]]
+then   
+    # BUILD DIR STRUCTURE IF NEEDED
+    if [[ ! -d $DestinationDir ]] #Main Backup Folder
+    then
+        mkdir "$DestinationDir"
+    fi
+
+    if [[ ! -d $DestinationDir/db_backups ]] #DB Backup Folder
+    then
+        mkdir "$DestinationDir/db_backups"
+    fi
+
+    if [[ ! -d $DestinationDir/daily ]] #Daily Backup Folder
+    then
+        mkdir "$DestinationDir/daily"
+    fi
+
+    if [[ ! -d $DestinationDir/weekly ]] #Weekly Backup Folder
+    then
+        mkdir "$DestinationDir/weekly"
+    fi
+
+    if [[ ! -d $DestinationDir/monthly ]] #Monthly Backup Folder
+    then
+        mkdir "$DestinationDir/monthly"
+    fi
+
+    # DUMP DATABASE
+    ls -tp "$DestinationDir/db_backups" | grep -v '/$' | tail -n +$DatabasesToKeep | xargs -d '\n' -r rm -- #Remove SQL Database if file count > set number
+
+    # Check to see if the database variables are not empty before running
+    if [[ ! -z $RootSQLPassword && ! -z $Database && ! -z $SQLDumpFile ]]
+    then
+        mysqldump -p$RootSQLPassword $Database > "$DestinationDir/db_backups/$SQLDumpFile"
+    fi
+
+    # CREATE AND COMPRESS ARCHIVE DAILY
+    # Each time this script is called by cron or manually, an archive will be created in /daily
+    tar -zcf $DestinationDir/daily/$DestinationFile $(printf "%q " "${SourceDirs[@]}")
+
+    # CREATE AND COMPRESS ARCHIVE WEEKLY
+    # Find the newest file (based on modifification time, so can be thrown by manually editing files in dir)
+    unset -v latest
+    for file in $DestinationDir/weekly/*; do
+        [[ $file -nt $latest ]] && latest=$file
+    done
+
+    # Check if latest is greater than 6 days old or directory empty and create archive in /weekly 
+    if [[ $(find $latest -mtime +6 -print) || ! "$(ls -A $DestinationDir/weekly)" ]]
+    then
+        cp $DestinationDir/daily/$DestinationFile $DestinationDir/weekly
+    fi
+
+    # CREATE AND COMPRESS ARCHIVE MONTHLY
+    # Find the newest file (based on modifification time, so can be thrown by manually editing files in dir)
+    unset -v latestMonth
+    for file in $DestinationDir/monthly/*; do
+        [[ $file -nt $latestMonth ]] && latestMonth=$file
+    done
+
+    # Check if latest is greater than 30 days old or directory empty and create archive in /monthly 
+    if [[ "$(find $latestMonth -mtime +30 -print)" || ! "$(ls -A $DestinationDir/monthly)" ]]
+    then
+        cp $DestinationDir/daily/$DestinationFile $DestinationDir/monthly
+    fi
+
+    # REMOVE OLD ARCHIVES
+    ls -tp $DestinationDir/daily | grep -v '/$' | tail -n +8 | xargs -I% -d '\n' -r rm -f $DestinationDir/daily/% #Remove Daily if file count > 7
+    ls -tp $DestinationDir/weekly | grep -v '/$' | tail -n +5 | xargs -I% -d '\n' -r rm -f $DestinationDir/weekly/% #Remove Weekly if file count > 4
+    ls -tp $DestinationDir/monthly | grep -v '/$' | tail -n +13 | xargs -I% -d '\n' -r rm -f $DestinationDir/monthly/% #Remove Weekly if file count > 12
+
+    # BACKUP TO CLOUD
+    # Check rclone variables are not empty
+    if [[ ! -z $rcloneRemote && ! -z $rcloneBucket ]]
+    then
+        # BACKUP CURRENT FILES
+        # Loop through the source dir array and backup
+        for elt in "${SourceDirs[@]}"
+        do
+            rclone sync "$elt/" "$rcloneRemote:$rcloneBucket/current$elt/"           
+        done
+
+        # BACKUP ARCHIVES
+        # Check backup archive frequency and sync archives to /archive directory
+        if [[ $rcloneArchiveFrequency == 'daily' ]]
+        then
+            rclone sync "$DestinationDir" "$rcloneRemote:$rcloneBucket/archive"
+        elif [[ $rcloneArchiveFrequency == 'weekly' ]]
+        then
+            rclone sync "$DestinationDir" --exclude daily/** "$rcloneRemote:$rcloneBucket/archive"
+        elif [[ $rcloneArchiveFrequency == 'monthly' ]]
+        then
+            rclone sync "$DestinationDir" --exclude daily/** weekly/** "$rcloneRemote:$rcloneBucket/archive"
+        fi
+    fi
+fi
